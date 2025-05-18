@@ -36,86 +36,77 @@ def write_progress_json(progress, status="running", msg=""):
     with open(RECAP_PROGRESS_PATH, "w", encoding="utf-8") as pf:
         json.dump({"progress": progress, "status": status, "msg": msg, "ts": time.time()}, pf)
 
-def process_all_subs(video_files, subtitle_files):
-    all_segments = []
-    for idx, (video_name, srt_path) in enumerate(zip(video_files, subtitle_files)):
-        with open(srt_path, "r", encoding="utf-8") as f:
-            subs = list(srt.parse(f))
-        parsed_subs = [(s.start.total_seconds(), s.end.total_seconds(), s.content.strip()) for s in subs if s.content.strip()]
-        cleaned_subs = [(start, end, re.sub(r"\s*\n\s*", " ", text)) for start, end, text in parsed_subs]
-        # Сливаем по завершённости
-        merged_subs = []
-        buffer_text = ""
-        buffer_start = None
-        for start, end, text in cleaned_subs:
-            if buffer_text == "":
-                buffer_start = start
-                buffer_text = text
-            else:
-                buffer_text += " " + text
-            if re.search(r"[.?!…]$", text.strip()):
-                merged_subs.append((buffer_start, end, buffer_text.strip()))
-                buffer_text = ""
-                buffer_start = None
+def parse_srt_to_sentences(srt_path, video_filename, file_idx):
+    with open(srt_path, "r", encoding="utf-8") as f:
+        subs = list(srt.parse(f))
+    parsed_subs = [(s.start.total_seconds(), s.end.total_seconds(), s.content.strip()) for s in subs if s.content.strip()]
+    cleaned_subs = [(start, end, re.sub(r"\s*\n\s*", " ", text)) for start, end, text in parsed_subs]
+    merged_sentences = []
+    buffer_text = ""
+    buffer_start = None
+    buffer_end = None
+
+    for start, end, text in cleaned_subs:
+        if not buffer_text:
+            buffer_start = start
         if buffer_text:
-            merged_subs.append((buffer_start, end, buffer_text.strip()))
-        # Все speaker = "UNKNOWN"
-        annotated_subs = [(start, end, f"UNKNOWN: {text}") for start, end, text in merged_subs]
-        # Мерджим подряд идущие фразы одного спикера (все будут UNKNOWN)
-        merged_annotated_subs = []
-        current_speaker = None
-        buffer_text = ""
-        buffer_start = None
-        buffer_end = None
-        for start, end, line in annotated_subs:
-            speaker, text = line.split(":", 1)
-            speaker = speaker.strip()
-            text = text.strip()
-            if speaker == current_speaker:
-                buffer_text += " " + text
-                buffer_end = end
-            else:
-                if current_speaker is not None:
-                    merged_annotated_subs.append((buffer_start, buffer_end, f"{current_speaker}: {buffer_text.strip()}"))
-                current_speaker = speaker
-                buffer_text = text
-                buffer_start = start
-                buffer_end = end
-        if current_speaker is not None:
-            merged_annotated_subs.append((buffer_start, buffer_end, f"{current_speaker}: {buffer_text.strip()}"))
-        # DataFrame
-        df = pd.DataFrame(merged_annotated_subs, columns=["start", "end", "text"])
-        df["speaker"] = "UNKNOWN"
-        df["phrase"] = df["text"].apply(lambda x: ":".join(x.split(":")[1:]).strip())
-        df["duration"] = df["end"] - df["start"]
-        df["length"] = df["phrase"].apply(len)
-        df["file"] = os.path.basename(video_name)
-        df["file_idx"] = idx + 1
-        all_segments.append(df)
-    result_df = pd.concat(all_segments, ignore_index=True)
-    return result_df
+            buffer_text += " " + text
+        else:
+            buffer_text = text
+        buffer_end = end
+        if re.search(r"[.?!…]$", text.strip()):
+            merged_sentences.append((buffer_start, buffer_end, buffer_text.strip(), video_filename, file_idx))
+            buffer_text = ""
+            buffer_start = None
+            buffer_end = None
+
+    if buffer_text:
+        merged_sentences.append((buffer_start, buffer_end, buffer_text.strip(), video_filename, file_idx))
+    df = pd.DataFrame(merged_sentences, columns=["start", "end", "text", "file", "file_idx"])
+    return df
+
+def process_all_srt(video_files, subtitle_files):
+    all_sentences = []
+    for idx, (video_file, srt_file) in enumerate(zip(video_files, subtitle_files)):
+        if not os.path.exists(srt_file):
+            continue
+        df = parse_srt_to_sentences(srt_file, os.path.basename(video_file), idx + 1)
+        all_sentences.append(df)
+    if not all_sentences:
+        return pd.DataFrame(columns=["start", "end", "text", "file", "file_idx"])
+    return pd.concat(all_sentences, ignore_index=True)
 
 def pick_main_segments(df, model_name, max_duration=120):
     model = SBertSummarizer(model_name)
-    texts = df["phrase"].tolist()
+    texts = df["text"].tolist()
+    if not texts:
+        return []
     num_sentences = min(20, len(texts))
-    selected_text = model(" ".join(texts), num_sentences=num_sentences)
-    summary_phrases = [s.strip() for s in selected_text.split('\n') if s.strip()]
-    picked = []
-    for phrase in summary_phrases:
-        for idx, row in df.iterrows():
-            if phrase in row["phrase"] and idx not in picked:
-                picked.append(idx)
-                break
-    # Собираем фрагменты, не превышая max_duration
+    #print("\n".join(texts))
+   # texts1 = texts[:10]
+    selected_text = model("\n".join(texts), num_sentences=num_sentences, return_as_list=True)
+    print(selected_text)
+    #summary_phrases = [s.strip() for s in selected_text.split('\n') if s.strip()]
+    summary_phrases = selected_text
+    if not summary_phrases:
+        picked_indices = list(range(min(num_sentences, len(df))))
+    else:
+        picked_indices = []
+        for phrase in summary_phrases:
+            for idx, row in df.iterrows():
+                if phrase in row["text"] and idx not in picked_indices:
+                    picked_indices.append(idx)
+                    break
+
     result = []
     total = 0
-    for idx in picked:
+    for idx in picked_indices:
         row = df.iloc[idx]
-        if total + row["duration"] > max_duration:
+        seg_duration = row["end"] - row["start"]
+        if total + seg_duration > max_duration:
             break
         result.append(row)
-        total += row["duration"]
+        total += seg_duration
     return result
 
 def run_recap_with_logger(log, progress_cb=None):
@@ -144,8 +135,9 @@ def run_recap_with_logger(log, progress_cb=None):
 
     log("Предобработка субтитров...", 0.05)
     write_progress_json(0.05, status="running", msg="Предобработка субтитров...")
-    df = process_all_subs(video_files, subtitle_files)
+    df = process_all_srt(video_files, subtitle_files)
 
+    log(f"Всего предложений: {len(df)}", 0.10)
     log("Выбор главных фрагментов через SBert...", 0.20)
     write_progress_json(0.20, status="running", msg="Выбор главных фрагментов через SBert...")
     picked = pick_main_segments(df, model_name, max_duration)
@@ -155,16 +147,15 @@ def run_recap_with_logger(log, progress_cb=None):
         write_progress_json(1.0, status="error", msg=msg)
         return
 
-    # Формируем recap.txt и json
     log("Формируется текстовый рекап...", 0.25)
     recap_texts = []
     recap_scenes = []
     for row in picked:
-        recap_texts.append(f"{row['file']} [{row['speaker']}]: {row['phrase']}")
+        recap_texts.append(f"{row['file']} [UNKNOWN]: {row['text']}")
         recap_scenes.append({
             "file": row["file"], "file_idx": int(row["file_idx"]),
             "start": float(row["start"]), "end": float(row["end"]),
-            "speaker": row["speaker"], "text": row["phrase"]
+            "speaker": "UNKNOWN", "text": row["text"]
         })
     recap_txt = os.path.join(OUT_PATH, "recap.txt")
     with open(recap_txt, "w", encoding="utf-8") as f:
@@ -175,7 +166,6 @@ def run_recap_with_logger(log, progress_cb=None):
         json.dump(recap_scenes, f, ensure_ascii=False, indent=2)
     log(f"Сохранён JSON с событиями: {recap_json}", 0.35)
 
-    # Генерация видеорекапа
     log("Генерируется видео-рекап...", 0.4)
     write_progress_json(0.4, status="running", msg="Генерируется видео-рекап...")
 
