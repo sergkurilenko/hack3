@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Генератор Видеорекапов</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .scroll-box { max-height: 400px; overflow-y: auto; background: #fafbfc; border-radius: 8px; border: 1px solid #e3e5e8; }
+        .files-list { font-size: 0.98em; }
+        #recapLogs { font-family: monospace; font-size: 0.96em; background: #161b22; color: #d1d5da; padding: 8px; border-radius: 8px; max-height: 260px; overflow-y: auto; }
+        .upload-btn input[type="file"] { display: none; }
+    </style>
+</head>
+<body class="bg-light">
+<div class="container py-4">
+    <div class="d-flex align-items-center mb-4">
+        <h2 class="me-3">Генератор видеорекапов</h2>
+        <span class="badge bg-secondary">v1.0</span>
+    </div>
+    <form class="row g-3 align-items-end mb-4" action="/set_config" method="post">
+        <div class="col-auto">
+            <label class="form-label">Жанр видео</label>
+            <input type="text" class="form-control" name="genre" value="{{config.genre}}" placeholder="Напр. драма, комедия">
+        </div>
+        <div class="col-auto">
+            <label class="form-label">Длительность перехода (сек)</label>
+            <input type="number" class="form-control" step="0.1" min="0" name="transition_duration" value="{{config.transition_duration}}">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+        <div class="col-auto">
+            <button id="runRecapBtn" type="button" class="btn btn-success">Создать рекап</button>
+        </div>
+    </form>
+
+    <div id="recapProgressBox" style="display:none;" class="mb-3">
+        <div class="d-flex align-items-center">
+            <span class="me-2">Прогресс:</span>
+            <div class="progress flex-grow-1">
+                <div id="recapProgressBar" class="progress-bar" role="progressbar" style="width: 0%;">0%</div>
+            </div>
+            <span id="recapStatusText" class="ms-2 text-primary"></span>
+        </div>
+        <div id="recapLogs" class="mt-2"></div>
+    </div>
+
+    <div class="row gy-4 mt-2">
+        <!-- IN/videos -->
+        <div class="col-md-5">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <span>IN/videos</span>
+                    <input class="form-control form-control-sm w-50" type="text" id="searchVideos" placeholder="Поиск видео...">
+                </div>
+                <div class="card-body p-2 scroll-box">
+                    <ul class="list-group list-group-flush files-list" id="videosList">
+                        <!-- Кнопка загрузки видео -->
+                        <li class="list-group-item py-2 px-1">
+                            <form id="uploadVideoForm" action="/upload_file" method="post" enctype="multipart/form-data" class="d-flex align-items-center gap-2">
+                                <input type="file" name="video_file" accept=".mp4" class="form-control form-control-sm" style="max-width:260px" required onchange="this.form.submit()">
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="this.previousElementSibling.click();">Загрузить видео</button>
+                            </form>
+                        </li>
+                        {% for v in in_videos %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-2 px-1">
+                            <a href="/IN/videos/{{v}}" target="_blank" title="{{v}}">
+                                <span class="text-break">{{v}}</span>
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <!-- IN/subtitles -->
+        <div class="col-md-3">
+            <div class="card shadow-sm">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                    <span>IN/subtitles</span>
+                    <input class="form-control form-control-sm w-50" type="text" id="searchSubs" placeholder="Поиск...">
+                </div>
+                <div class="card-body p-2 scroll-box">
+                    <ul class="list-group list-group-flush files-list" id="subsList">
+                        <!-- Кнопка загрузки субтитров -->
+                        <li class="list-group-item py-2 px-1">
+                            <form id="uploadSubtitleForm" action="/upload_file" method="post" enctype="multipart/form-data" class="d-flex align-items-center gap-2">
+                                <input type="file" name="subtitle_file" accept=".srt" class="form-control form-control-sm" style="max-width:260px" required onchange="this.form.submit()">
+                                <button type="button" class="btn btn-sm btn-outline-info" onclick="this.previousElementSibling.click();">Загрузить субтитры</button>
+                            </form>
+                        </li>
+                        {% for s in in_subs %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-2 px-1">
+                            <a href="/IN/subtitles/{{s}}" target="_blank" title="{{s}}">
+                                <span class="text-break">{{s}}</span>
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <!-- OUT -->
+        <div class="col-md-4" id="outBlock">
+            <div class="card shadow-sm">
+                <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                    <span>OUT (результаты)</span>
+                    <button id="clearOutBtn" type="button" class="btn btn-sm btn-outline-light">Очистить</button>
+                </div>
+                <div class="card-body p-2 scroll-box">
+                    <ul class="list-group list-group-flush files-list">
+                        {% for o in out_files %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-2 px-1">
+                            <a href="/OUT/{{o}}" target="_blank">
+                                <span class="text-break">{{o}}</span>
+                            </a>
+                        </li>
+                        {% endfor %}
+                        {% if not out_files %}
+                        <li class="list-group-item text-muted">Папка пуста</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Фильтр по видеофайлам
+    document.getElementById("searchVideos").addEventListener("input", function() {
+        filterList("videosList", this.value);
+    });
+    document.getElementById("searchSubs").addEventListener("input", function() {
+        filterList("subsList", this.value);
+    });
+    function filterList(listId, query) {
+        let ul = document.getElementById(listId);
+        let items = ul.getElementsByTagName("li");
+        query = query.toLowerCase();
+        for (let i = 0; i < items.length; i++) {
+            let text = items[i].innerText.toLowerCase();
+            items[i].style.display = text.includes(query) ? "" : "none";
+        }
+    }
+
+    let recapInterval = null;
+
+    document.getElementById('runRecapBtn').onclick = function() {
+        document.getElementById('recapProgressBox').style.display = '';
+        document.getElementById('recapLogs').innerText = '';
+        document.getElementById('recapStatusText').innerText = 'Запуск...';
+        document.getElementById('recapProgressBar').style.width = '0%';
+        document.getElementById('recapProgressBar').innerText = '0%';
+
+        fetch('/run_recap', {method:'POST'})
+            .then(() => {
+                if (recapInterval) clearInterval(recapInterval);
+                recapInterval = setInterval(fetchRecapProgress, 900);
+            });
+    };
+
+    function fetchRecapProgress() {
+        fetch(`/recap_progress`)
+            .then(r => r.json())
+            .then(data => {
+                let status = data.status;
+                let progress = Math.round((data.progress || 0) * 100);
+                document.getElementById('recapProgressBar').style.width = progress + '%';
+                document.getElementById('recapProgressBar').innerText = progress + '%';
+                let color = 'bg-info';
+                if (status === 'done') color = 'bg-success';
+                if (status === 'error') color = 'bg-danger';
+                document.getElementById('recapProgressBar').className = 'progress-bar ' + color;
+                document.getElementById('recapStatusText').innerText = (
+                    status === 'running' ? 'Выполняется...' :
+                    status === 'done' ? 'Готово!' :
+                    status === 'error' ? 'Ошибка!' : ''
+                );
+                document.getElementById('recapLogs').innerText = (data.msg||'');
+                if (status === 'done' || status === 'error') {
+                    clearInterval(recapInterval);
+                    showAlert(status === 'done' ? 'Генерация завершена!' : 'Ошибка при генерации!', status === 'done');
+                    fetchOutFiles();
+                }
+            });
+    }
+
+    function showAlert(text, success=true) {
+        let alertBox = document.createElement('div');
+        alertBox.className = `alert ${success ? 'alert-success' : 'alert-danger'} alert-dismissible fade show position-fixed top-0 end-0 m-3`;
+        alertBox.role = 'alert';
+        alertBox.innerHTML = text + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+        document.body.appendChild(alertBox);
+        setTimeout(() => {
+            if (alertBox.parentNode) alertBox.parentNode.removeChild(alertBox);
+        }, 3500);
+    }
+
+    function fetchOutFiles() {
+        fetch(window.location.pathname)
+            .then(r => r.text())
+            .then(html => {
+                let parser = new DOMParser();
+                let doc = parser.parseFromString(html, 'text/html');
+                let newOut = doc.querySelector('#outBlock');
+                let outContainer = document.querySelector('#outBlock');
+                if (outContainer && newOut) {
+                    outContainer.innerHTML = newOut.innerHTML;
+                }
+            });
+    }
+
+    document.getElementById("clearOutBtn").onclick = function() {
+        fetch("/clear_out", {method: "POST"})
+            .then(() => {
+                fetchOutFiles();
+                showAlert("OUT очищена!", true);
+            });
+    };
+</script>
+</body>
+</html>
