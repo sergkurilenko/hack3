@@ -2,5 +2,10 @@ fastapi
 uvicorn
 jinja2
 moviepy==1.0.3
-pysrt==1.1.2
+pandas
 python-multipart
+srt
+bert-extractive-summarizer
+transformers
+torch
+sentence_transformers

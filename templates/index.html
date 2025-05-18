@@ -16,7 +16,7 @@
 <div class="container py-4">
     <div class="d-flex align-items-center mb-4">
         <h2 class="me-3">Генератор видеорекапов</h2>
-        <span class="badge bg-secondary">v1.0</span>
+        <span class="badge bg-secondary">v1.1</span>
     </div>
     <form class="row g-3 align-items-end mb-4" action="/set_config" method="post">
         <div class="col-auto">
@@ -26,6 +26,14 @@
         <div class="col-auto">
             <label class="form-label">Длительность перехода (сек)</label>
             <input type="number" class="form-control" step="0.1" min="0" name="transition_duration" value="{{config.transition_duration}}">
+        </div>
+        <div class="col-auto">
+            <label class="form-label">Макс. длительность рекапа (сек)</label>
+            <input type="number" class="form-control" min="10" name="max_recap_duration" value="{{config.max_recap_duration or 120}}">
+        </div>
+        <div class="col-auto">
+            <label class="form-label">Модель SBert</label>
+            <input type="text" class="form-control" name="sbert_model" value="{{config.sbert_model or 'paraphrase-MiniLM-L6-v2'}}" placeholder="Напр. paraphrase-MiniLM-L6-v2">
         </div>
         <div class="col-auto">
             <button type="submit" class="btn btn-primary">Сохранить</button>
@@ -128,7 +136,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // Фильтр по видеофайлам
     document.getElementById("searchVideos").addEventListener("input", function() {
         filterList("videosList", this.value);
     });

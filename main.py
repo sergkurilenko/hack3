@@ -14,17 +14,32 @@ app.mount("/IN", StaticFiles(directory="IN"), name="in")
 templates = Jinja2Templates(directory="templates")
 
 def list_files(path, exts=None):
-    result = []
-    for fname in os.listdir(path):
-        if exts is None or fname.lower().endswith(tuple(exts)):
-            result.append(fname)
-    return sorted(result)
+    try:
+        files = os.listdir(path)
+    except FileNotFoundError:
+        files = []
+    if exts is not None:
+        files = [f for f in files if f.lower().endswith(tuple(exts))]
+    return sorted(files)
 
 def read_config():
+    default = {
+        "genre": "",
+        "transition_duration": 1.0,
+        "max_recap_duration": 120,
+        "sbert_model": "paraphrase-MiniLM-L6-v2"
+    }
     if not os.path.exists(RECAP_CONFIG_PATH):
-        return {"genre": "", "transition_duration": 1.0}
-    with open(RECAP_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return default
+    try:
+        with open(RECAP_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        for k, v in default.items():
+            if k not in cfg:
+                cfg[k] = v
+        return cfg
+    except Exception:
+        return default
 
 @app.get("/")
 async def index(request: Request):
@@ -41,9 +56,20 @@ async def index(request: Request):
     })
 
 @app.post("/set_config")
-async def set_config(request: Request, genre: str = Form(""), transition_duration: float = Form(1.0)):
+async def set_config(
+    request: Request,
+    genre: str = Form(""),
+    transition_duration: float = Form(1.0),
+    max_recap_duration: int = Form(120),
+    sbert_model: str = Form("paraphrase-MiniLM-L6-v2")
+):
     with open(RECAP_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"genre": genre, "transition_duration": transition_duration}, f)
+        json.dump({
+            "genre": genre,
+            "transition_duration": transition_duration,
+            "max_recap_duration": max_recap_duration,
+            "sbert_model": sbert_model
+        }, f)
     return RedirectResponse("/", status_code=303)
 
 @app.post("/run_recap")
